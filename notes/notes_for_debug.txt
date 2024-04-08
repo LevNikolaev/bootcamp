@@ -1,0 +1,98 @@
+#########################
+1. Сборка и установка PostgreSQL
+#########################
+
+# Обновите индекс пакетов и установите необходимые пакеты для сборки PostgreSQL и его расширений.
+sudo apt-get update && sudo apt-get install -y build-essential libreadline-dev zlib1g-dev \
+flex bison libxml2-dev libxslt-dev libssl-dev libicu-dev \
+python3-dev liblz4-dev libzstd-dev libsasl2-dev libldap2-dev \
+libpam0g-dev uuid-dev libgss-dev libselinux1-dev systemd \
+libsystemd-dev pkg-config git libkrb5-dev libipc-run-perl \
+xsltproc fop libxml2-utils gdb
+
+# Создайте группу и пользователя 'postgres' для работы с PostgreSQL.
+groupadd -r postgres
+useradd -r -g postgres -d /var/lib/postgresql \
+-s /bin/bash postgres
+
+# Создайте необходимые директории и установите права доступа.
+mkdir -p /var/lib/postgresql/data
+chown postgres:postgres /var/lib/postgresql/data
+chmod 700 /var/lib/postgresql
+
+mkdir -p /var/run/postgresql
+chown postgres:postgres /var/run/postgresql
+
+mkdir -p /var/log/postgresql
+chown postgres:postgres /var/log/postgresql
+
+mkdir -p /usr/local/pgsql
+chown postgres:postgres /usr/local/pgsql
+
+# Клонируйте репозиторий PostgreSQL и расширение pg_store_plans из GitHub.
+git clone -b REL_16_1 https://github.com/postgres/postgres.git
+cd postgres/contrib/
+git clone -b 1.8 https://github.com/TantorLabs/pg_store_plans.git
+
+# Добавьте название расширения в "Makefile" для его сборки вместе с PostgreSQL.
+# Откройте файл "postgres/contrib/Makefile" и добавьте "pg_store_plans" на соответствующей строке.
+
+cd ../
+# Соберите и установите PostgreSQL и все его расширения.
+make -j4 && sudo make install
+# Соберите и установите дополнительные утилиты ('world-bin').
+make -j4 world-bin && sudo make install-world
+
+# Инициализируйте кластер базы данных PostgreSQL.
+sudo -u postgres /usr/local/pgsql/bin/initdb -D /var/lib/postgresql/data/
+
+# Добавьте "shared_preload_libraries" в конфигурационный файл "postgresql.conf" для активации расширений.
+# Пример добавления 'pg_stat_statements', аналогично необходимо добавить и для 'pg_store_plans'.
+sed -i "$ a\shared_preload_libraries = 'pg_stat_statements' # (change requires restart)" /var/lib/postgresql/data/postgresql.conf
+
+# Запустите кластер базы данных PostgreSQL.
+/usr/local/pgsql/bin/pg_ctl -D /var/lib/postgresql/data/ start -s -w -t 10
+
+# Получение pg_backend_pid() для уазания в "processId"
+
+
+#########################
+2. Настройка Visual Studio Code для отладки
+#########################
+
+# Создайте директорию .vscode в корне проекта PostgreSQL для хранения конфигураций VS Code.
+mkdir -p postgres/.vscode
+cd postgres/.vscode/
+
+# Создайте файл launch.json для конфигурации сессий отладки.
+# Используйте vim или любой другой текстовый редактор для создания файла.
+vim launch.json
+
+# Скопируйте и вставьте следующее содержимое в launch.json.
+# Эта конфигурация позволяет прикрепиться к процессу PostgreSQL для отладки.
+# Замените "<ID процесса>" на актуальный ID процесса postgres, который можно получить с помощью команды `pgrep postgres`.
+
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Attach to Process",
+        "type": "cppdbg",
+        "request": "attach",
+        "program": "/usr/local/pgsql/bin/postgres",
+        "processId": "<ID процесса>",
+        "MIMode": "gdb",
+        "miDebuggerPath": "/usr/bin/gdb",
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          }
+        ]
+      }
+    ]
+}
+
+# Далее следуйте инструкциям докладчика для начала отладки.
+
