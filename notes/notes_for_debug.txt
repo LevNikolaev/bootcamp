@@ -8,7 +8,7 @@ flex bison libxml2-dev libxslt-dev libssl-dev libicu-dev \
 python3-dev liblz4-dev libzstd-dev libsasl2-dev libldap2-dev \
 libpam0g-dev uuid-dev libgss-dev libselinux1-dev systemd \
 libsystemd-dev pkg-config git libkrb5-dev libipc-run-perl \
-xsltproc fop libxml2-utils gdb
+xsltproc fop libxml2-utils gdb libxml2-utils
 
 # Создайте группу и пользователя 'postgres' для работы с PostgreSQL.
 groupadd -r postgres
@@ -16,57 +16,108 @@ useradd -r -g postgres -d /var/lib/postgresql \
 -s /bin/bash postgres
 
 # Создайте необходимые директории и установите права доступа.
-mkdir -p /var/lib/postgresql/data
-chown postgres:postgres /var/lib/postgresql/data
-chmod 700 /var/lib/postgresql
+sudo mkdir -p /var/lib/postgresql/data
+sudo chown postgres:postgres /var/lib/postgresql/data
+sudo chmod 700 /var/lib/postgresql
 
-mkdir -p /var/run/postgresql
-chown postgres:postgres /var/run/postgresql
-
-mkdir -p /var/log/postgresql
-chown postgres:postgres /var/log/postgresql
-
-mkdir -p /usr/local/pgsql
-chown postgres:postgres /usr/local/pgsql
+sudo mkdir -p /usr/local/pgsql
+sudo chown postgres:postgres /usr/local/pgsql
 
 # Клонируйте репозиторий PostgreSQL и расширение pg_store_plans из GitHub.
-git clone -b REL_16_1 https://github.com/postgres/postgres.git
-cd postgres/contrib/
-git clone -b 1.8 https://github.com/TantorLabs/pg_store_plans.git
-
+git clone --branch REL_16_1 --single-branch https://github.com/postgres/postgres.git
+cd postgres/contrib
+git clone https://github.com/LevNikolaev/bootcamp.git /tmp/
+cp -r /tmp/bootcamp/pg_store_plans . 
 # Добавьте название расширения в "Makefile" для его сборки вместе с PostgreSQL.
 # Откройте файл "postgres/contrib/Makefile" и добавьте "pg_store_plans" на соответствующей строке.
+vim Makefile
+>>
+  vacuumlo  \
+  pg_store_plans
 
 cd ../
+# Выполните configure
+./configure --prefix=/usr/local/pgsql \
+  --enable-tap-tests \
+  --with-python \
+  --with-icu \
+  --with-lz4 \
+  --with-zstd \
+  --enable-debug \
+  --enable-cassert \
+  CFLAGS="-O0"
+
 # Соберите и установите PostgreSQL и все его расширения.
 make -j4 && sudo make install
 # Соберите и установите дополнительные утилиты ('world-bin').
-make -j4 world-bin && sudo make install-world
+make -j4 world-bin && sudo make install-world-bin
+
+# Создание директории для размещения логов 
+# А так же директории нашего будущего кластера
+sudo mkdir -p /var/log/postgresql
+sudo chown postgres:postgres /var/log/postgresql
+sudo mkdir /var/lib/postgresql/data
+sudo chown postgres:postgres /var/lib/postgresql/data
 
 # Инициализируйте кластер базы данных PostgreSQL.
 sudo -u postgres /usr/local/pgsql/bin/initdb -D /var/lib/postgresql/data/
 
-# Добавьте "shared_preload_libraries" в конфигурационный файл "postgresql.conf" для активации расширений.
-# Пример добавления 'pg_stat_statements', аналогично необходимо добавить и для 'pg_store_plans'.
-sed -i "$ a\shared_preload_libraries = 'pg_stat_statements' # (change requires restart)" /var/lib/postgresql/data/postgresql.conf
+# Добавление настроек в postgresql.conf для активации расширений и настройки логирования.
+sudo -u postgres cat >> /var/lib/postgresql/data/postgresql.conf << EOL
+shared_preload_libraries = 'pg_stat_statements,pg_store_plans' # Предзагрузка библиотек для статистики SQL-запросов.
+logging_collector = on # Включение сбора логов сервера.
+log_directory = '/var/log/postgresql/' # Директория для хранения логов.
+log_filename = 'postgresql.log' # Имя файла лога.
+log_statement = 'all' # Логирование всех SQL-запросов.
+log_min_messages = debug1 # Уровень логирования, начиная с debug1.
+log_duration = on # Логирование времени выполнения запросов.
+log_destination = 'csvlog' # Формат логов - CSV.
+log_error_verbosity = verbose # Подробное логирование ошибок.
+log_lock_waits = on # Логирование ожиданий разблокировки.
+EOL
 
 # Запустите кластер базы данных PostgreSQL.
-/usr/local/pgsql/bin/pg_ctl -D /var/lib/postgresql/data/ start -s -w -t 10
+sudo -u postgres /usr/local/pgsql/bin/pg_ctl -D /var/lib/postgresql/data/ start -s -w -t 10
+
+sudo -u postgres /usr/local/pgsql/bin/psql -p 5432 -c "CREATE EXTENSION pg_stat_statements;"
+sudo -u postgres /usr/local/pgsql/bin/psql -p 5432 -c "CREATE EXTENSION pg_store_plans;"
 
 # Получение pg_backend_pid() для уазания в "processId"
+sudo -u postgres /usr/local/pgsql/bin/psql -p 5432
+SELECT pg_backend_pid();
 
+# Скопируем скрипт тестирования в /tmp/
+cp contrib/pg_store_plans/sql/convert.sql /tmp/
+sudo -u postgres /usr/local/pgsql/bin/psql -p 5432
+\i /tmp/convert.sql
 
 #########################
 2. Настройка Visual Studio Code для отладки
 #########################
 
+# Команды для установки VS Code
+sudo apt update && \
+sudo apt install software-properties-common apt-transport-https wget -y && \
+wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /usr/share/keyrings/packages.microsoft.gpg && \
+echo "deb [signed-by=/usr/share/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list && \
+sudo apt update && \
+sudo apt install code -y
+
+# Запустим VS Code от суперпользователя
+sudo -i
+cd /postgres
+code . --no-sandbox --user-data-dir=/tmp
+
 # Создайте директорию .vscode в корне проекта PostgreSQL для хранения конфигураций VS Code.
-mkdir -p postgres/.vscode
-cd postgres/.vscode/
+mkdir -p .vscode
+cd .vscode/
 
 # Создайте файл launch.json для конфигурации сессий отладки.
 # Используйте vim или любой другой текстовый редактор для создания файла.
 vim launch.json
+
+# В отдельном окне запустим логи в онлайн просмотре
+tail -f /var/log/postgresql/postgresql.csv
 
 # Скопируйте и вставьте следующее содержимое в launch.json.
 # Эта конфигурация позволяет прикрепиться к процессу PostgreSQL для отладки.
@@ -95,4 +146,5 @@ vim launch.json
 }
 
 # Далее следуйте инструкциям докладчика для начала отладки.
-
+# Команда для просмотра ошибок в логах базы
+grep -rnw /var/log/postgresql/postgresql.csv -e "ERROR"
